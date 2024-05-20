@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"fmt"
@@ -10,9 +11,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"github.com/redis/go-redis/v9"
 )
 
-func createDB(db *sql.DB) {
+func createPostgresDB(db *sql.DB) {
 	createDatabaseQuery := "SELECT 'CREATE DATABASE blocked_ips ENCODING UTF-8' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'blocked_ips');"
 	_, err := db.Exec(createDatabaseQuery)
 	if err != nil {
@@ -176,12 +178,22 @@ const (
 	postgresDbname   = "blocked_ips"
 )
 
+func fillNewRecordInRedis(redisDB *Client, entity *Entity, ctx *Context ) {
+	for _, ip_address := range (*entity).ipAddresses {
+		err := redisDB.Set(ctx, ip_address, "true", 0).Err()
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
 func main() {
+	// create psql db and init connection
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
 		"password=%s dbname=%s sslmode=disable",
 		postgresHost, postgresPort, postgresUser, postgresPassword, postgresDbname)
 
-	db, err := sql.Open("postgres", psqlInfo)
+	postgres, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -191,9 +203,17 @@ func main() {
 		if err != nil {
 			fmt.Println("Error occured while closing connection with database container")
 		}
-	}(db)
+	}(postgres)
+	createPostgresDB(postgres)
 
-	createDB(db)
+	// create redis db and init connection
+	ctx := context.Background()
+	redisDB := redis.NewClient(&redis.Options{
+		Addr:	  "redis:6379",
+		Password: "", // no password set
+		DB:		  0,  // use default DB
+	})
+
 
 	records := readCsvFile("dump.csv")
 
@@ -208,8 +228,8 @@ func main() {
 			URLs = parseStringsAndGetURLs(&IPsAndDomain)
 
 			recordInDB := Entity{IPs, domainName, URLs}
-
-			fillNewRecordInDB(db, &recordInDB)
+			fillNewRecordInRedis(redisDB, &recordInDB)
+			fillNewRecordInDB(postgres, &recordInDB)
 		}
 	}
 
