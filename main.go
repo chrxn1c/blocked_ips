@@ -6,12 +6,12 @@ import (
 	"encoding/csv"
 	"fmt"
 	_ "github.com/lib/pq"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/text/encoding/charmap"
 	"log"
 	"os"
 	"strconv"
 	"strings"
-	"github.com/redis/go-redis/v9"
 )
 
 func createPostgresDB(db *sql.DB) {
@@ -178,9 +178,9 @@ const (
 	postgresDbname   = "blocked_ips"
 )
 
-func fillNewRecordInRedis(redisDB *Client, entity *Entity, ctx *Context ) {
-	for _, ip_address := range (*entity).ipAddresses {
-		err := redisDB.Set(ctx, ip_address, "true", 0).Err()
+func fillNewRecordInRedis(redisDB *redis.Client, entity *Entity, ctx *context.Context) {
+	for _, ipAddress := range (*entity).ipAddresses {
+		err := redisDB.Set(*ctx, ipAddress, "true", 0).Err()
 		if err != nil {
 			panic(err)
 		}
@@ -188,6 +188,7 @@ func fillNewRecordInRedis(redisDB *Client, entity *Entity, ctx *Context ) {
 }
 
 func main() {
+	print("initializing the script\n")
 	// create psql db and init connection
 	psqlInfo := fmt.Sprintf("host=%s port=%d user=%s "+
 		"password=%s dbname=%s sslmode=disable",
@@ -209,11 +210,10 @@ func main() {
 	// create redis db and init connection
 	ctx := context.Background()
 	redisDB := redis.NewClient(&redis.Options{
-		Addr:	  "redis:6379",
+		Addr:     "redis-server:6379",
 		Password: "", // no password set
-		DB:		  0,  // use default DB
+		DB:       0,  // use default DB
 	})
-
 
 	records := readCsvFile("dump.csv")
 
@@ -228,7 +228,7 @@ func main() {
 			URLs = parseStringsAndGetURLs(&IPsAndDomain)
 
 			recordInDB := Entity{IPs, domainName, URLs}
-			fillNewRecordInRedis(redisDB, &recordInDB)
+			fillNewRecordInRedis(redisDB, &recordInDB, &ctx)
 			fillNewRecordInDB(postgres, &recordInDB)
 		}
 	}
